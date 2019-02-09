@@ -1,40 +1,33 @@
-node ('master'){
-   // Mark the code checkout 'stage'....
-   stage 'Checkout'
-   checkout scm
-
-   stage 'Build application and Run Unit Test'
-
-   def mvnHome = tool 'M3'
-   sh "${mvnHome}/bin/mvn clean package"
-
-   step([$class: 'JUnitResultArchiver', testResults: '**/target/surefire-reports/TEST-*.xml'])
-
-
-   stage 'Build Docker image'
-
-   def image = docker.build('infinityworks/dropwizard-example:snapshot', '.')
-
-   stage 'Acceptance Tests'
-   image.withRun('-p 8181:8080') {c ->
-        sh "${mvnHome}/bin/mvn verify"
+pipeline {
+  agent any
+  tools {
+        maven 'M3'
+    }
+  stages {
+    stage ('checkout code') {
+      steps {
+        git 'https://github.com/sohail7295/crudApp.'
+      }
    }
+    stage ('Run Build') {
+      steps {
+        sh "/opt/apache-maven-3.3.9/bin/mvn clean package"
+      }
+    }
+    
+     stage ('Nexus') {
+      steps {
+      nexusArtifactUploader artifacts: [[artifactId: 'crudApp', classifier: '', file: 'target/crudApp.war', type: 'war']], credentialsId: 'Nexus', groupId: 'Central', nexusUrl: '3.17.203.182:8081/nexus', nexusVersion: 'nexus2', protocol: 'http', repository: 'releases', version: '3.3'
+      }
+    }
 
-   /* Archive acceptance tests results */
-   step([$class: 'JUnitResultArchiver', testResults: '**/target/failsafe-reports/TEST-*.xml'])
-
-   stage 'Run SonarQube analysis'
-   sh "${mvnHome}/bin/mvn clean org.jacoco:jacoco-maven-plugin:prepare-agent test"
-   sh "${mvnHome}/bin/mvn package sonar:sonar -Dsonar.host.url=http://ec2-54-171-187-14.eu-west-1.compute.amazonaws.com:9000"
-
-   input "Does http://10.42.85.36:9000/dashboard/index/io.dropwizard:dropwizard-example look good?"
-
-   stage 'Push image'
-
-   docker.withRegistry("https://registry.infinityworks.com", "docker-registry") {
-      //tag=sh "\$(git rev-parse --short HEAD)"
-      image.tag("latest", false)
-      image.push()
-   }
-
+    
+    stage ('Copy to tomcat') {
+      steps {
+        sh "sudo wget http://3.17.203.182:8081/nexus/service/local/repositories/releases/content/Central/crudApp/3.3/crudApp-3.3.war -O /opt/apache-tomcat-9.0.14/webapps/crudApp.war"
+        sh "sudo sh /opt/apache-tomcat-9.0.14/bin/catalina.sh stop"
+        sh "sudo sh /opt/apache-tomcat-9.0.14/bin/catalina.sh start"
+      }
+    }
+  }
 }
